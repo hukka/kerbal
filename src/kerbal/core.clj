@@ -24,16 +24,23 @@
 
 (defn connect!
   ([host rpc-port stream-port]
+   (connect! "Remote" host rpc-port stream-port))
+  ([name host rpc-port stream-port]
    (reset! *connection*
-           (Connection/newInstance "Remote" host rpc-port stream-port))))
+           (Connection/newInstance name host rpc-port stream-port))))
 
 (defn disconnect! []
   (.close @*connection*)
   (reset! *connection* nil))
 
+(defn get-krpc []
+  (KRPC/newInstance @*connection*))
+
 (defn krpc-version []
-  (let [krpc (KRPC/newInstance @*connection*)]
-    (-> krpc .getStatus .getVersion)))
+  (-> (get-krpc) .getStatus .getVersion))
+
+(defn get-clients []
+  (.getClients (get-krpc)))
 
 (defn get-space-center []
   (SpaceCenter/newInstance @*connection*))
@@ -48,11 +55,19 @@
 (defn get-auto-pilot [vessel]
   (.getAutoPilot vessel))
 
-(defn get-flight [vessel frame]
-  (.flight vessel frame))
+(defn get-flight
+  ([]
+   (get-flight (get-vessel) nil))
+  ([vessel]
+   (get-flight vessel nil))
+  ([vessel frame]
+   (.flight vessel frame)))
 
 (defn next-stage! [vessel]
   (.activateNextStage (get-control vessel)))
+
+(defn abort! [vessel]
+  (.setAbort (get-control vessel) true))
 
 (defn add-stream! [x n & args]
   (.addStream @*connection* x n (to-array args)))
@@ -85,8 +100,20 @@
 (defn engine-has-fuel? [engine]
   (.getHasFuel engine))
 
-(defn solid-rocket-engine? [engine]
-  (.getThrottleLocked engine))
+(defn solid-rocket-engine?
+  "Check if engine is solid fuelled, by assuming they can't be shut down."
+  [engine]
+  ;; - The part configs have a staging icons for solid and liquid engines,
+  ;;   but unfortunately that cannot be accessed via kRPC.
+  ;; - Alternatively we could check for propellant types.
+  ;;   In the FASA Saturn V these are:
+  ;;   SolidFuel (fairings), PSPC (ullage motors), HTPB (launch escape system)
+  ;;    (clojure.set/superset?
+  ;;      #{"SolidFuel" "PSPC" "HTPB"}
+  ;;      (set (.getPropellantNames engine))]
+  ;; - Third way might be to check how many propellants the engine has –
+  ;;   solid engines always have one and liquid engines two propellants.
+  (not (.getCanShutdown engine)))
 
 (defn next-stage-has-release-clamps? [vessel stage]
   (let [clamps (.getLaunchClamps (.getParts vessel))
@@ -107,7 +134,7 @@
      (* 0.1 (.max (.getResources (get-vessel)) "ElectricCharge"))))
 
 (defn get-surface-altitude [vessel]
-  (.getMeanAltitude (get-flight vessel (.getSurfaceReferenceFrame vessel))))
+  (.getSurfaceAltitude (get-flight vessel (.getSurfaceReferenceFrame vessel))))
 
 
 (defn last-stage? [vessel stage]
@@ -292,3 +319,56 @@
               (fly-to-orbit! 100000))
             (disconnect!)))
   @flight)
+
+(defn prompt! [& msgs]
+  (println (str/join "\n" msgs))
+  (println "Press enter to continue")
+  (flush)
+  (read-line))
+
+(defn generate-connection-unique-prefix []
+  (str (.getClientName (get-krpc)) (.hashCode @*connection*)))
+
+(defn save!
+  "Save a game with `savename` prefixed with `prefix` or a default based on your connection id."
+  ([]
+   (save! "clj-autosave"))
+  ([savename]
+   (save! (generate-connection-unique-prefix) savename))
+  ([prefix savename]
+   (.save (get-space-center) (str prefix savename))))
+
+(defn load!
+  "Load a saved game with `savename` prefixed with `prefix` or a default based on your connection id.
+  Unfortunately there's no way to get a list of saved games via kRPC."
+  ([]
+   (load! "clj-autosave"))
+  ([savename]
+   (load! savename (generate-connection-unique-prefix)))
+  ([savename prefix]
+   (.load (get-space-center) (str prefix savename))))
+
+(defn sasmode
+  "Wrap the kRPC Java enum for SASMode.
+  You can use either strings or keywords to refer to the `mode`:
+  => (sasmode :PROGRADE)
+  #object[krpc.client.services.SpaceCenter$SASMode 0x663cc771 \"PROGRADE\"]"
+  [mode]
+  (krpc.client.services.SpaceCenter$SASMode/valueOf (name mode)))
+
+(defn orbital-frame [vessel]
+  (.getReferenceFrame (.getBody (.getOrbit vessel))))
+
+(defn get-first-satellite [vessel]
+  (first (.getSatellites (.getBody (.getOrbit vessel)))))
+
+(defn min-achiavable-inclination-to-first-satellite [vessel]
+  (- (.getInclination (.getOrbit vessel))
+     (.getInclination (.getOrbit (get-first-satellite vessel)))))
+
+;; TODO function that can take orbits or objects that have orbits and calculates the relative inclination
+(defn inclination-to-first-satellite [vessel]
+  (.relativeInclination (.getOrbit vessel)
+                        (.getOrbit (get-first-satellite vessel))))
+
+;; TODO function to count time until next optimal launch time based on relative inclination
