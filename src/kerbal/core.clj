@@ -405,3 +405,39 @@
     (doseq [[altitude pitch] pitches]
        (wait-for-altitude altitude)
        (.targetPitchAndHeading autopilot (- 90 pitch) 90))))
+
+#_(do
+   (log! "Ignition")
+   (next-stage! (get-vessel))
+   (.setThrottle (get-control (get-vessel)) 1)
+   (Thread/sleep 9000) ;; TODO: Wait for throttle to max properly
+   (log! "Lift-off")
+   (next-stage! (get-vessel))
+   (.engage (get-auto-pilot (get-vessel)))
+   (saturnv-pitch-program!
+    [[50 0]
+     [1200 1]
+     [1400 2]
+     [1500 3]
+     [1800 5]
+     [2000 6]
+     [2200 7]
+     [2400 8]
+     [2600 9]
+     [2800 10]])
+   (Thread/sleep 1000) ;; TODO: Wait based on error of autopilot
+   (.disengage (get-auto-pilot (get-vessel)))
+   (.setSAS (get-control (get-vessel)) true)
+   (Thread/sleep 500) ;; HMMM! Setting sas mode does not do anything without a short wait after engaging sas
+   (.setSASMode (get-control (get-vessel)) (sasmode :PROGRADE)))
+
+;; Different ways to go to the Moon:
+;; 0. Launch to any parking orbit and change the plane using ludicruous amount of dV.
+;; 1. Launch at minimal relative inclination straight east (to maximize Earth's rotation)
+;;    to parking orbit, change the plane at desc/asc node, boost at right phase to raise apoapsis
+;;    to lunar orbit.
+;; 2. Launch when crossing the Moon's orbital plane, flying with non-90 degree azimuth,
+;;    to get directly to matching orbit.
+;;    If the phase also matches, can boost to Moon without parking orbit
+;; 3. Launch to any orbit, and increase apoapsis to cross with Moon's orbit.
+;;    With really good timing, will end up at the moon from a weird angle!
