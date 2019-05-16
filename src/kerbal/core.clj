@@ -3,7 +3,7 @@
             [clojure.pprint :refer [print-table]]
             [clojure.string :as str])
   (:import [krpc.client Connection]
-           [krpc.client.services KRPC SpaceCenter UI]))
+           [krpc.client.services KRPC KRPC$Expression SpaceCenter UI]))
 
 (defn inspect [x]
   (->> x
@@ -372,3 +372,36 @@
                         (.getOrbit (get-first-satellite vessel))))
 
 ;; TODO function to count time until next optimal launch time based on relative inclination
+
+(defn call [target method]
+  (.getCall @*connection*
+           target
+           method
+           (to-array [])))
+
+(defn e< [a b]
+  (KRPC$Expression/greaterThan @*connection* a b))
+
+(defn ecall [target method]
+  (KRPC$Expression/call @*connection* (call target method)))
+
+(defmulti econst type)
+(defmethod econst java.lang.Double [value]
+  (KRPC$Expression/constantDouble @*connection* value))
+(defmethod econst java.lang.Long [value]
+  (KRPC$Expression/constantInt @*connection* value))
+
+(defn event [expression]
+  (.addEvent (get-krpc) expression))
+
+(defn wait-for-altitude [altitude]
+  (let [event (event (e< (ecall (get-flight) "getSurfaceAltitude")
+                         (econst (double altitude))))]
+    (locking (.getCondition event)
+      (.waitFor event))))
+
+(defn saturnv-pitch-program! [pitches]
+  (let [autopilot (get-auto-pilot (get-vessel))]
+    (doseq [[altitude pitch] pitches]
+       (wait-for-altitude altitude)
+       (.targetPitchAndHeading autopilot (- 90 pitch) 90))))
