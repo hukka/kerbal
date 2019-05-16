@@ -94,7 +94,7 @@
     (doall active-engines)))
 
 (comment
-  (connect! "192.168.88.146" 50000 50001)
+  (connect! "10.110.1.37" 50000 50001)
   (get-active-engines (get-vessel)))
 
 (defn engine-has-fuel? [engine]
@@ -393,6 +393,27 @@
 
 (defn event [expression]
   (.addEvent (get-krpc) expression))
+
+(comment
+  ; These are some tests to see how kRPC logic works.
+
+  ; The default seems to give same results as the orbital frame
+  (.getSurfaceAltitude (get-flight))
+  (.getSurfaceAltitude (get-flight (get-vessel) (orbital-frame (get-vessel))))
+  (.get (add-stream! (get-flight) "getSurfaceAltitude"))
+
+  ; Seems like we get updates for a float value even when on the pad,
+  ; so this returns immediately, always. I guess the physics engine keeps wobbling the rocket.
+  (let [stream (add-stream! (get-flight) "getSurfaceAltitude")]
+    (locking (.getCondition stream)
+      (.get stream)
+      (.waitForUpdate stream)))
+
+  ; This actually waits until abort happens
+  (let [stream (add-stream! (get-control (get-vessel)) "getAbort")]
+    (locking (.getCondition stream)
+      (.get stream)
+      (.waitForUpdate stream))))
 
 (defn wait-for-altitude [altitude]
   (let [event (event (e< (ecall (get-flight) "getSurfaceAltitude")
